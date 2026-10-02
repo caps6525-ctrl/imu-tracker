@@ -254,7 +254,7 @@ function processSample(nowMs) {
   // （不論手機怎麼轉，走路時 |a| 的波峰都在，比依賴 Madgwick 收斂後的世界座標垂直分量穩健得多）
   const accMagnitude = Math.sqrt(ax*ax + ay*ay + az*az) - GRAVITY;
 
-  stepDetection(nowMs, accWorld, gz, accMagnitude);
+  stepDetection(nowMs, accWorld, gz, accMagnitude, dt);
 }
 
 function round3(v) { return Math.round(v * 1000) / 1000; }
@@ -270,7 +270,7 @@ function lowPassFilter(value, alpha = 0.3) {
   return stepFilterState.filtered;
 }
 
-function stepDetection(nowMs, accWorld, gyroZ, accMagnitude) {
+function stepDetection(nowMs, accWorld, gyroZ, accMagnitude, dt) {
   const filtered = lowPassFilter(accMagnitude);
 
   state.accVertBuffer.push({ t: nowMs, v: filtered, vertWorld: accWorld[2] });
@@ -283,7 +283,10 @@ function stepDetection(nowMs, accWorld, gyroZ, accMagnitude) {
   if (turning) state.turnSuppressUntil = nowMs + 150;
 
   // 航向角持續用陀螺儀 yaw 分量積分更新（簡化：直接用世界座標角速度 z 分量）
-  const dt = 0.02;
+  // 必須用 processSample 算出的真實 dt（取樣間隔），不能假設固定頻率——
+  // 手機實際取樣率會因裝置/負載而異（本機實測 60Hz，若誤用 0.02s(=50Hz) 當 dt，
+  // 相當於把每次角速度積分放大 20%，走幾十秒下來足以讓整段航向嚴重偏移，
+  // 導致路線形狀扭曲、首尾無法閉合）。
   state.heading += gyroZ * dt;
 
   // 滯後雙門檻峰值偵測（hysteresis thresholding）：
