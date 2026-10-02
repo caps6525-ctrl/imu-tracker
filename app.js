@@ -45,14 +45,16 @@ const state = {
 };
 
 // 不同攜帶方式的加速度峰值門檻 (m/s^2)
-// 基於「三軸合成加速度模長扣除重力常數」(|a|-g)，步伐衝擊振幅通常比單軸垂直分量大。
-// 下列為文獻量級估計的初始值，非實機校準值；首次實測後務必依 raw_sensor_log 的
-// 實際波形重新調整（見 docs/SPEC.md 的 disclaimer 章節）。
+// 基於「三軸合成加速度模長扣除重力常數」(|a|-g)。
+// 【目前為暫時性低門檻，僅供波形校準用】第一輪實機測試顯示先前估計的
+// 2.0+ 門檻遠高於實際訊號量級（波形被壓成看不出起伏，步伐完全偵測不到）。
+// 暫時調低以便先看清楚真實訊號大小，待有真實峰值數據後應立刻依
+// 「訊號峰值的 50-60%」重新設定，不應長期使用這組暫定值。
 const CARRY_MODE_THRESHOLD = {
-  pocket_pants: 2.0,
-  pocket_jacket: 2.2,
-  handheld: 2.8,
-  armband: 2.4,
+  pocket_pants: 0.4,
+  pocket_jacket: 0.5,
+  handheld: 0.6,
+  armband: 0.5,
 };
 
 const GRAVITY = 9.80665;
@@ -420,7 +422,6 @@ function updateLiveStats() {
    除錯用即時波形圖（用於現場校準步伐偵測門檻值）
    ====================================================================== */
 let waveformCtx = null;
-let waveformPeakDisplay = 0;
 
 function drawWaveformDebug(filteredValue) {
   const canvas = document.getElementById('canvas-waveform');
@@ -441,11 +442,14 @@ function drawWaveformDebug(filteredValue) {
 
   const threshold = CARRY_MODE_THRESHOLD[state.carryMode] || 1.0;
   const values = buf.map(b => b.v);
-  const maxAbs = Math.max(threshold * 1.5, ...values.map(Math.abs), 0.5);
+  // Y軸依「實際訊號動態範圍」自動縮放，不綁定門檻值——否則門檻設太高時，
+  // 真實訊號會被壓縮到畫面中央一小段，肉眼看起來像是平的，而看不出真實量級。
+  const maxAbs = Math.max(...values.map(Math.abs), 0.3);
 
-  waveformPeakDisplay = Math.max(...values);
+  const windowMax = Math.max(...values);
+  const windowMin = Math.min(...values);
   const peakLabel = document.getElementById('debug-peak-value');
-  if (peakLabel) peakLabel.textContent = `峰值: ${waveformPeakDisplay.toFixed(2)} / 門檻 ${threshold.toFixed(1)}`;
+  if (peakLabel) peakLabel.textContent = `近2.5秒範圍: ${windowMin.toFixed(2)} ~ ${windowMax.toFixed(2)} / 門檻 ${threshold.toFixed(1)}`;
 
   ctx.clearRect(0, 0, w, h);
 
