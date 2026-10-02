@@ -243,7 +243,13 @@ function processSample(nowMs) {
   const q = madgwick.update(gx, gy, gz, ax, ay, az, mag ? mag[0] : null, mag ? mag[1] : null, mag ? mag[2] : null, dt);
 
   // 計算線性加速度（扣除重力）：重力方向 = 世界座標 Z 軸經逆旋轉回裝置座標
-  const gravityWorld = [0, 0, GRAVITY];
+  //
+  // 重力正負號必須跟 Madgwick 內部的加速度計參考模型一致（見 madgwick.update 的 f3 項）：
+  // 本機感測器靜止時，與世界座標「上」方向對齊的裝置軸讀數是 -GRAVITY（物理加速度慣例），
+  // 不是 +GRAVITY（specific force 慣例）。Madgwick 那邊已經依這個慣例修正過（f79b76b），
+  // 但這裡原本仍用 +GRAVITY，兩處對重力方向的假設互相矛盾，導致扣完重力後 accWorld.z
+  // 恆定帶著約 -2×GRAVITY 的偏移，二次積分後即使走平地也會讓高度持續下掉。
+  const gravityWorld = [0, 0, -GRAVITY];
   const qInv = quatConjugate(q);
   const gravityDevice = rotateVectorByQuat(qInv, gravityWorld);
   const linearAccDevice = [ax - gravityDevice[0], ay - gravityDevice[1], az - gravityDevice[2]];
