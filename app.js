@@ -424,8 +424,17 @@ function registerStep(nowMs, buf) {
   state.lastStepTime = nowMs;
   state.stepCount++;
 
-  // 動態步長估計 (Weinberg 公式)：用最近窗口的峰谷差
-  const windowVals = buf.slice(-15).map(b => b.v);
+  // nowMs 是偵測到的「波峰時間」（peakCandidate.t），不是呼叫當下的即時時間——
+  // 兩者會差到幾十~上百 ms，因為波峰之後訊號還要回落到 lowThreshold 以下才會觸發
+  // registerStep。buf（state.accVertBuffer）用 slice(-15) 永遠抓「呼叫當下」緩衝區
+  // 尾端 15 筆，等於只拿到波峰之後的下降/穩定段，漏掉波峰之前的上升段——窗口跟它要
+  // 代表的「這一步」時間點沒對齊。這個偏移對振幅峰谷差（下面的步長估計）影響較小，
+  // 但對 estimateVerticalDisplacement 的二次積分是系統性偏差：同一方向的缺口每步
+  // 都重複出現，走久了會讓高度持續偏移，即使走平地也一樣（即便重力正負號已經修正）。
+  const window = centerWindowOnTime(buf, nowMs, 15);
+
+  // 動態步長估計 (Weinberg 公式)：用窗口內的峰谷差
+  const windowVals = window.map(b => b.v);
   const aMax = Math.max(...windowVals);
   const aMin = Math.min(...windowVals);
   const diff = Math.max(aMax - aMin, 0.1);
@@ -438,8 +447,8 @@ function registerStep(nowMs, buf) {
   const dx = stepLength * Math.sin(state.heading);
   const dy = stepLength * Math.cos(state.heading);
 
-  // 垂直位移：用最近窗口的加速度二次積分近似（每步 ZUPT 重置，見下方不連續累積）
-  const dz = estimateVerticalDisplacement(buf);
+  // 垂直位移：用對齊波峰時間的窗口做加速度二次積分近似（每步 ZUPT 重置，見下方不連續累積）
+  const dz = estimateVerticalDisplacement(window);
 
   state.pos.x += dx;
   state.pos.y += dy;
@@ -467,10 +476,30 @@ function registerStep(nowMs, buf) {
   updateViz3D();
 }
 
-function estimateVerticalDisplacement(buf) {
+function centerWindowOnTime(buf, centerTime, size) {
+  // 在 buf（依時間排序）中找離 centerTime 最近的樣本，以它為中心取 size 筆，
+  // 而不是永遠取 buf 尾端——呼叫 registerStep 的當下時間點通常落後波峰時間
+  // (centerTime) 一段距離，尾端窗口會系統性漏掉波峰之前的樣本。
+  let centerIdx = buf.length - 1;
+  let bestDiff = Infinity;
+  for (let i = buf.length - 1; i >= 0; i--) {
+    const diff = Math.abs(buf[i].t - centerTime);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      centerIdx = i;
+    } else if (buf[i].t < centerTime) {
+      break; // 時間已排序，差距開始變大代表已經找到最近點
+    }
+  }
+  const half = Math.floor(size / 2);
+  const start = Math.max(0, centerIdx - half);
+  const end = Math.min(buf.length, centerIdx + (size - half));
+  return buf.slice(start, end);
+}
+
+function estimateVerticalDisplacement(window) {
   // 簡化 ZUPT：對該步窗口內「世界座標垂直加速度」(vertWorld，有正負號) 做二次積分，
   // 並以步窗口邊界歸零速度。注意：不可用 accMagnitude 模長欄位(v)，那是無方向性的量，積分沒有物理意義。
-  const window = buf.slice(-15);
   if (window.length < 3) return 0;
   let v = 0, z = 0;
   for (let i = 1; i < window.length; i++) {
