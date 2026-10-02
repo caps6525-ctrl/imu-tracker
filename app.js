@@ -45,11 +45,14 @@ const state = {
 };
 
 // 不同攜帶方式的加速度峰值門檻 (m/s^2)
+// 基於「三軸合成加速度模長扣除重力常數」(|a|-g)，步伐衝擊振幅通常比單軸垂直分量大。
+// 下列為文獻量級估計的初始值，非實機校準值；首次實測後務必依 raw_sensor_log 的
+// 實際波形重新調整（見 docs/SPEC.md 的 disclaimer 章節）。
 const CARRY_MODE_THRESHOLD = {
-  pocket_pants: 0.8,
-  pocket_jacket: 1.0,
-  handheld: 1.2,
-  armband: 0.9,
+  pocket_pants: 2.0,
+  pocket_jacket: 2.2,
+  handheld: 2.8,
+  armband: 2.4,
 };
 
 const GRAVITY = 9.80665;
@@ -246,7 +249,11 @@ function processSample(nowMs) {
     orientation_quat: [round4(q[0]), round4(q[1]), round4(q[2]), round4(q[3])],
   });
 
-  stepDetection(nowMs, accWorld, gz);
+  // 步伐偵測改用「加速度向量模長」扣除重力常數，這個量對姿態估計誤差不敏感
+  // （不論手機怎麼轉，走路時 |a| 的波峰都在，比依賴 Madgwick 收斂後的世界座標垂直分量穩健得多）
+  const accMagnitude = Math.sqrt(ax*ax + ay*ay + az*az) - GRAVITY;
+
+  stepDetection(nowMs, accWorld, gz, accMagnitude);
 }
 
 function round3(v) { return Math.round(v * 1000) / 1000; }
@@ -255,19 +262,20 @@ function round4(v) { return Math.round(v * 10000) / 10000; }
 /* ======================================================================
    步伐偵測 + 動態步長 + 航向更新 + 樓梯分類
    ====================================================================== */
-const stepFilterState = { prev: 0, filtered: 0 };
+const stepFilterState = { filtered: 0, armed: false, peakCandidate: null };
 
-function lowPassFilter(value, alpha = 0.25) {
+function lowPassFilter(value, alpha = 0.3) {
   stepFilterState.filtered = stepFilterState.filtered + alpha * (value - stepFilterState.filtered);
   return stepFilterState.filtered;
 }
 
-function stepDetection(nowMs, accWorld, gyroZ) {
-  const vertAcc = accWorld[2];
-  const filtered = lowPassFilter(vertAcc);
+function stepDetection(nowMs, accWorld, gyroZ, accMagnitude) {
+  const filtered = lowPassFilter(accMagnitude);
 
-  state.accVertBuffer.push({ t: nowMs, v: filtered });
+  state.accVertBuffer.push({ t: nowMs, v: filtered, vertWorld: accWorld[2] });
   if (state.accVertBuffer.length > 200) state.accVertBuffer.shift();
+
+  drawWaveformDebug(filtered);
 
   // 轉彎抑制（因子#11）：高角速度時暫停步長累積，只更新航向
   const turning = Math.abs(gyroZ) > (100 * Math.PI / 180);
@@ -277,22 +285,29 @@ function stepDetection(nowMs, accWorld, gyroZ) {
   const dt = 0.02;
   state.heading += gyroZ * dt;
 
-  // 峰值偵測：簡單的局部極大值 + 門檻 + 步間最小間隔
-  const threshold = CARRY_MODE_THRESHOLD[state.carryMode] || 1.0;
-  const buf = state.accVertBuffer;
-  if (buf.length < 3) return;
+  // 滯後雙門檻峰值偵測（hysteresis thresholding）：
+  // 訊號需先「上升超過 highThreshold」進入 armed 狀態，再「回落到 lowThreshold 以下」才確認完成一次波峰，
+  // 避免單點比較在雜訊環境下對同一個真實步伐重複觸發或被雜訊打斷漏判。
+  const highThreshold = CARRY_MODE_THRESHOLD[state.carryMode] || 1.0;
+  const lowThreshold = highThreshold * 0.3;
 
-  const prev2 = buf[buf.length - 3].v;
-  const prev1 = buf[buf.length - 2].v;
-  const curr = buf[buf.length - 1].v;
-
-  const isPeak = prev1 > prev2 && prev1 >= curr && prev1 > threshold;
-  const timeSinceLastStep = nowMs - state.lastStepTime;
-
-  if (isPeak && timeSinceLastStep > 250 && timeSinceLastStep < 2000 && nowMs > state.turnSuppressUntil) {
-    registerStep(nowMs, buf);
-  } else if (isPeak && state.lastStepTime === 0 && timeSinceLastStep > 250) {
-    registerStep(nowMs, buf);
+  if (!stepFilterState.armed && filtered > highThreshold) {
+    stepFilterState.armed = true;
+    stepFilterState.peakCandidate = { t: nowMs, v: filtered };
+  } else if (stepFilterState.armed) {
+    if (filtered > stepFilterState.peakCandidate.v) {
+      stepFilterState.peakCandidate = { t: nowMs, v: filtered };
+    }
+    if (filtered < lowThreshold) {
+      stepFilterState.armed = false;
+      const candidateTime = stepFilterState.peakCandidate.t;
+      const sinceLast = candidateTime - state.lastStepTime;
+      if (sinceLast > 250 && sinceLast < 2000 && candidateTime > state.turnSuppressUntil) {
+        registerStep(candidateTime, state.accVertBuffer);
+      } else if (state.lastStepTime === 0) {
+        registerStep(candidateTime, state.accVertBuffer);
+      }
+    }
   }
 }
 
@@ -344,14 +359,15 @@ function registerStep(nowMs, buf) {
 }
 
 function estimateVerticalDisplacement(buf) {
-  // 簡化 ZUPT：對該步窗口內垂直加速度做二次積分，並以步窗口邊界歸零速度
+  // 簡化 ZUPT：對該步窗口內「世界座標垂直加速度」(vertWorld，有正負號) 做二次積分，
+  // 並以步窗口邊界歸零速度。注意：不可用 accMagnitude 模長欄位(v)，那是無方向性的量，積分沒有物理意義。
   const window = buf.slice(-15);
   if (window.length < 3) return 0;
   let v = 0, z = 0;
   for (let i = 1; i < window.length; i++) {
     const dt = (window[i].t - window[i-1].t) / 1000;
     if (dt <= 0 || dt > 0.5) continue;
-    v += window[i].v * dt;
+    v += window[i].vertWorld * dt;
     z += v * dt;
   }
   // 限制單步垂直位移在合理範圍內（一般樓梯單階 15-20cm），避免積分噴出不合理值
@@ -398,6 +414,70 @@ function updateLiveStats() {
   }[state.currentSegmentType] || state.currentSegmentType;
   document.getElementById('stat-segment').textContent = segLabel;
   document.getElementById('stat-confidence').textContent = Math.round(state.currentConfidence * 100) + '%';
+}
+
+/* ======================================================================
+   除錯用即時波形圖（用於現場校準步伐偵測門檻值）
+   ====================================================================== */
+let waveformCtx = null;
+let waveformPeakDisplay = 0;
+
+function drawWaveformDebug(filteredValue) {
+  const canvas = document.getElementById('canvas-waveform');
+  if (!canvas) return;
+  if (!waveformCtx) waveformCtx = canvas.getContext('2d');
+
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+  if (canvas.width !== cssW * dpr || canvas.height !== cssH * dpr) {
+    canvas.width = cssW * dpr;
+    canvas.height = cssH * dpr;
+  }
+  const w = canvas.width, h = canvas.height;
+  const ctx = waveformCtx;
+
+  const buf = state.accVertBuffer.slice(-150); // 最近約 2.5 秒 (60Hz)
+  if (buf.length < 2) return;
+
+  const threshold = CARRY_MODE_THRESHOLD[state.carryMode] || 1.0;
+  const values = buf.map(b => b.v);
+  const maxAbs = Math.max(threshold * 1.5, ...values.map(Math.abs), 0.5);
+
+  waveformPeakDisplay = Math.max(...values);
+  const peakLabel = document.getElementById('debug-peak-value');
+  if (peakLabel) peakLabel.textContent = `峰值: ${waveformPeakDisplay.toFixed(2)} / 門檻 ${threshold.toFixed(1)}`;
+
+  ctx.clearRect(0, 0, w, h);
+
+  // 門檻線 (黃)
+  const yForValue = (v) => h/2 - (v / maxAbs) * (h/2 - 4*dpr);
+  ctx.strokeStyle = '#ffb020';
+  ctx.setLineDash([4*dpr, 4*dpr]);
+  ctx.lineWidth = 1.5 * dpr;
+  ctx.beginPath();
+  ctx.moveTo(0, yForValue(threshold));
+  ctx.lineTo(w, yForValue(threshold));
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // 零線
+  ctx.strokeStyle = '#2d3850';
+  ctx.lineWidth = 1 * dpr;
+  ctx.beginPath();
+  ctx.moveTo(0, h/2);
+  ctx.lineTo(w, h/2);
+  ctx.stroke();
+
+  // 訊號線 (藍)
+  ctx.strokeStyle = '#4f8cff';
+  ctx.lineWidth = 2 * dpr;
+  ctx.beginPath();
+  buf.forEach((pt, i) => {
+    const x = (i / (buf.length - 1)) * w;
+    const y = yForValue(pt.v);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
 }
 
 /* ======================================================================

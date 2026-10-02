@@ -68,6 +68,15 @@
       <div class="stat"><span class="stat-label">取樣率(Hz)</span><span id="stat-samplerate" class="stat-value">--</span></div>
     </div>
 
+    <div id="debug-waveform-box">
+      <div class="debug-waveform-header">
+        <span>即時加速度訊號（校準用）</span>
+        <span id="debug-peak-value">峰值: --</span>
+      </div>
+      <canvas id="canvas-waveform"></canvas>
+      <p class="hint">黃線＝目前步伐偵測門檻。訊號若從未超過黃線，代表門檻太高；若雜訊持續超過黃線，代表門檻太低。</p>
+    </div>
+
     <button id="btn-stop" class="btn btn-danger">停止</button>
   </section>
 
