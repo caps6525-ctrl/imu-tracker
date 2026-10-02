@@ -115,9 +115,15 @@ const madgwick = {
       const bx = Math.sqrt(hx*hx + hy*hy);
       const bz = mx*2*(q2*q4-q1*q3) + my*2*(q3*q4+q1*q2) + mz*(1-2*q2*q2-2*q3*q3);
 
+      // f3 用 "+az" 而非論文常見的 "-az"：W3C accelerationIncludingGravity 在裝置
+      // 靜止、z軸朝上時的標準讀數是負值（約-1，歸一化後），不是論文慣例假設的+1，
+      // 兩者符號相反。若誤用 "-az"，梯度下降在正常持握姿態（單位四元數）處的
+      // 殘差不為零，會把姿態持續推離正確解、收斂到180度倒置的錯誤姿態——
+      // 這是先前好幾次指南針增益調整都救不回來的根本原因：姿態估計本身在
+      // 演算法層面就收斂錯了，後續所有建立在姿態之上的修正都無效。
       const f1 = 2*(q2*q4 - q1*q3) - ax;
       const f2 = 2*(q1*q2 + q3*q4) - ay;
-      const f3 = 1 - 2*(q2*q2 + q3*q3) - az;
+      const f3 = 1 - 2*(q2*q2 + q3*q3) + az;
       const f4 = 2*bx*(0.5 - q3*q3 - q4*q4) + 2*bz*(q2*q4 - q1*q3) - mx;
       const f5 = 2*bx*(q2*q3 - q1*q4) + 2*bz*(q1*q2 + q3*q4) - my;
       const f6 = 2*bx*(q1*q3 + q2*q4) + 2*bz*(0.5 - q2*q2 - q3*q3) - mz;
@@ -140,9 +146,10 @@ const madgwick = {
       qDot4 = 0.5*(q1*gz + q2*gy - q3*gx) - this.beta*s4;
     } else {
       // 退化為 6 軸（加速度 + 陀螺儀），磁力受干擾時使用
+      // f3 同樣用 "+az"，理由見上方 9 軸分支的說明
       const f1 = 2*(q2*q4 - q1*q3) - ax;
       const f2 = 2*(q1*q2 + q3*q4) - ay;
-      const f3 = 1 - 2*(q2*q2 + q3*q3) - az;
+      const f3 = 1 - 2*(q2*q2 + q3*q3) + az;
 
       const J11 = -2*q3, J12 = 2*q4, J13 = -2*q1, J14 = 2*q2;
       const J21 = 2*q2, J22 = 2*q1, J23 = 2*q4, J24 = 2*q3;
