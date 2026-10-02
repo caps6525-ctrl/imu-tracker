@@ -191,13 +191,15 @@ function handleMotion(event) {
 }
 
 function handleOrientation(event) {
-  // 作為磁力計資料的替代來源（Web 無直接 Magnetometer 權限時，用方向事件推算航向參考）
+  // event.alpha 是手機/瀏覽器內部已經融合運算過的指南針角度，不是原始三軸磁力讀數(µT)。
+  // 之前曾經把它包裝成假的 [cos,sin,0] 向量餵給 Madgwick 當作磁力計輸入，
+  // 但 Madgwick 的磁力計修正項實際上沒有被接進梯度計算（等同沒作用的死碼），
+  // 若之後要啟用該修正，絕對不能直接餵這個合成向量——那等於把裝置自己算好的
+  // 指南針角度，偽裝成「獨立的磁場觀測」回饋給濾波器，兩者其實高度相關，
+  // 濾波器會誤以為得到了新資訊，可能放大既有的指南針誤差而非修正陀螺儀漂移。
+  // 目前僅保留 _lastHeadingHint 供未來做法(b)：直接用指南針角度週期性修正 heading，
+  // 而不經過 Madgwick 的磁力計路徑。lastMag 維持 null，讓濾波器誠實地只用 6 軸(加速度+陀螺儀)。
   if (event.alpha === null) return;
-  // 轉換成近似磁力向量（僅用於航向修正，非真實 µT 值）
-  const alphaRad = (event.alpha || 0) * Math.PI / 180;
-  const betaRad = (event.beta || 0) * Math.PI / 180;
-  const gammaRad = (event.gamma || 0) * Math.PI / 180;
-  lastMag = [Math.cos(alphaRad), Math.sin(alphaRad), 0];
   state._lastHeadingHint = event.webkitCompassHeading !== undefined && event.webkitCompassHeading !== null
     ? event.webkitCompassHeading
     : (360 - event.alpha);
@@ -223,13 +225,13 @@ function processSample(nowMs) {
 
   const [ax, ay, az] = lastAcc; // m/s^2, 含重力, 裝置座標系
   const [gx, gy, gz] = lastGyro; // rad/s
-  const mag = lastMag || [1, 0, 0];
+  const mag = lastMag; // 目前恆為 null（見 handleOrientation 的說明），Madgwick 以 6 軸模式運作
 
   // 磁場異常偵測（因子#6）：用近似值，此處偵測陀螺儀/加速度計是否劇烈不一致作為簡化代理
   // 真實 µT 值在 Web 環境難以直接取得，改用方向事件連續性作為可信度代理指標
   state.magDisturbed = false;
 
-  const q = madgwick.update(gx, gy, gz, ax, ay, az, mag[0], mag[1], mag[2], dt);
+  const q = madgwick.update(gx, gy, gz, ax, ay, az, mag ? mag[0] : null, mag ? mag[1] : null, mag ? mag[2] : null, dt);
 
   // 計算線性加速度（扣除重力）：重力方向 = 世界座標 Z 軸經逆旋轉回裝置座標
   const gravityWorld = [0, 0, GRAVITY];
@@ -246,7 +248,8 @@ function processSample(nowMs) {
     acc: [round3(ax), round3(ay), round3(az)],
     acc_linear: [round3(accWorld[0]), round3(accWorld[1]), round3(accWorld[2])],
     gyro: [round4(gx), round4(gy), round4(gz)],
-    mag: [round3(mag[0]), round3(mag[1]), round3(mag[2])],
+    mag: mag ? [round3(mag[0]), round3(mag[1]), round3(mag[2])] : null,
+    compass_heading_deg: state._lastHeadingHint !== undefined ? round3(state._lastHeadingHint) : null,
     orientation_quat: [round4(q[0]), round4(q[1]), round4(q[2]), round4(q[3])],
   });
 
@@ -254,7 +257,12 @@ function processSample(nowMs) {
   // （不論手機怎麼轉，走路時 |a| 的波峰都在，比依賴 Madgwick 收斂後的世界座標垂直分量穩健得多）
   const accMagnitude = Math.sqrt(ax*ax + ay*ay + az*az) - GRAVITY;
 
-  stepDetection(nowMs, accWorld, gz, accMagnitude, dt);
+  // 陀螺儀角速度是「手機自己座標系」的旋轉速率，必須先旋轉到世界座標系才能拿來
+  // 累積世界座標系的航向角——只有手機完全水平時裝置座標系z軸才會等於世界座標系垂直軸，
+  // 實際攜帶方式(口袋/手持/晃動)幾乎都有傾斜，直接用裝置座標gz累積會讓航向嚴重偏移。
+  const gyroWorld = rotateVectorByQuat(q, [gx, gy, gz]);
+
+  stepDetection(nowMs, accWorld, gyroWorld[2], accMagnitude, dt);
 }
 
 function round3(v) { return Math.round(v * 1000) / 1000; }
@@ -738,6 +746,9 @@ function startTracking() {
   state.accVertBuffer = [];
   pathPoints = [new THREE.Vector3(0,0,0)];
   stepFilterState.filtered = 0;
+  stepFilterState.armed = false;
+  stepFilterState.peakCandidate = null;
+  state.turnSuppressUntil = 0;
   madgwick.q = [1,0,0,0];
 
   state.track.push({ t_ms: 0, x: 0, y: 0, z: 0, segment_type: 'flat', confidence: 1.0 });
