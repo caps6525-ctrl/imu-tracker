@@ -305,12 +305,34 @@ function stepDetection(nowMs, accWorld, gyroZ, accMagnitude, dt) {
   // 覆蓋，這樣短期內仍主要信任陀螺儀的平滑積分，只在長時間尺度上緩慢
   // 拉回指南針方向，兩者誤差特性互補（陀螺儀短期準、長期飄；指南針長期
   // 穩、短期易受瞬間磁擾跳動）。
+  //
+  // 增益必須隨當下角速度動態調整，不能用固定值：實測真實數據發現，走直線
+  // 時固定的小增益（原本0.02）太弱，跟不上陀螺儀的長期漂移累積速度，導致
+  // 多次轉彎後路徑持續偏向同一側、首尾無法閉合；但快速轉彎當下（gyroZ大）
+  // 指南針讀數本身有裝置內部融合延遲，若維持同樣增益去牽引，反而會在真正
+  // 轉彎的瞬間把 heading 向錯誤方向拉、讓轉彎角度被低估。用當下 |gyroZ|
+  // 當作信任判斷依據：轉彎越快，越不信任指南針（降低增益）；越接近直線走，
+  // 越信任指南針（提高增益，加速收斂）。
   if (state._lastHeadingHint !== undefined && state._lastHeadingHint !== null) {
     const compassHeadingRad = state._lastHeadingHint * Math.PI / 180;
     let diff = compassHeadingRad - state.heading;
     // 把角度差正規化到 [-PI, PI]，避免在 0/360 度邊界附近修正方向算反
     diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-    const headingCorrectionGain = 0.02; // 每個取樣點只牽引2%，約數秒內緩慢收斂
+
+    const absGyroZ = Math.abs(gyroZ); // rad/s
+    const slowThreshold = 20 * Math.PI / 180;  // 低於此角速度視為接近直線走
+    const fastThreshold = 90 * Math.PI / 180;  // 高於此角速度視為明確在轉彎
+    let turnFactor;
+    if (absGyroZ <= slowThreshold) {
+      turnFactor = 1;
+    } else if (absGyroZ >= fastThreshold) {
+      turnFactor = 0;
+    } else {
+      turnFactor = 1 - (absGyroZ - slowThreshold) / (fastThreshold - slowThreshold);
+    }
+    const minGain = 0.01;  // 快速轉彎時仍保留極小修正，避免長時間轉彎中完全失去指南針錨定
+    const maxGain = 0.08;  // 接近直線走時加快收斂，修正陀螺儀長期漂移
+    const headingCorrectionGain = minGain + (maxGain - minGain) * turnFactor;
     state.heading += diff * headingCorrectionGain;
   }
 
