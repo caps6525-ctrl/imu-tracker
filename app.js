@@ -297,6 +297,23 @@ function stepDetection(nowMs, accWorld, gyroZ, accMagnitude, dt) {
   // 導致路線形狀扭曲、首尾無法閉合）。
   state.heading += gyroZ * dt;
 
+  // 用裝置指南針角度（event.alpha / webkitCompassHeading）做互補濾波修正，
+  // 抑制純陀螺儀積分長時間的漂移。做法上刻意不經過 Madgwick 的磁力計路徑
+  // （那條路徑的梯度計算是死碼，且指南針角度本身已是裝置融合過的值，不是
+  // 原始磁場，不該偽裝成獨立觀測餵給濾波器），改成直接、可驗證地牽引
+  // heading：每次取樣只修正一個小比例(headingCorrectionGain)，而非直接
+  // 覆蓋，這樣短期內仍主要信任陀螺儀的平滑積分，只在長時間尺度上緩慢
+  // 拉回指南針方向，兩者誤差特性互補（陀螺儀短期準、長期飄；指南針長期
+  // 穩、短期易受瞬間磁擾跳動）。
+  if (state._lastHeadingHint !== undefined && state._lastHeadingHint !== null) {
+    const compassHeadingRad = state._lastHeadingHint * Math.PI / 180;
+    let diff = compassHeadingRad - state.heading;
+    // 把角度差正規化到 [-PI, PI]，避免在 0/360 度邊界附近修正方向算反
+    diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+    const headingCorrectionGain = 0.02; // 每個取樣點只牽引2%，約數秒內緩慢收斂
+    state.heading += diff * headingCorrectionGain;
+  }
+
   // 滯後雙門檻峰值偵測（hysteresis thresholding）：
   // 訊號需先「上升超過 highThreshold」進入 armed 狀態，再「回落到 lowThreshold 以下」才確認完成一次波峰，
   // 避免單點比較在雜訊環境下對同一個真實步伐重複觸發或被雜訊打斷漏判。
