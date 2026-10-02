@@ -899,9 +899,13 @@ function countLevelChanges() {
 function copyTrackJSON() {
   const data = window._exportData;
   if (!data) return;
-  const text = JSON.stringify(data.track, null, 2);
+  // SPEC.md 承諾這個按鈕輸出「純座標序列，給主管比較用」，只留 x/y/z，
+  // 不含 t_ms/segment_type/confidence 等分析用的中繼資料，方便直接貼到
+  // 其他繪圖/比較工具，不用先手動清理欄位。
+  const coords = data.track.map(pt => [pt.x, pt.y, pt.z]);
+  const text = JSON.stringify(coords, null, 2);
   navigator.clipboard.writeText(text).then(() => {
-    alert('Track JSON 已複製到剪貼簿（' + data.track.length + ' 個點）');
+    alert('Track JSON 已複製到剪貼簿（' + coords.length + ' 個點）');
   }).catch(() => {
     alert('複製失敗，請改用下載功能');
   });
