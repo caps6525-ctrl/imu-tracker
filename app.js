@@ -570,6 +570,11 @@ function initResultViz() {
    ====================================================================== */
 async function requestPermission() {
   const statusBox = document.getElementById('permission-status');
+  const btnStart = document.getElementById('btn-start');
+  statusBox.textContent = '請求權限中...';
+  statusBox.className = 'status-box status-pending';
+  btnStart.disabled = true;
+
   try {
     if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
       const motionPerm = await DeviceMotionEvent.requestPermission();
@@ -579,17 +584,41 @@ async function requestPermission() {
       const orientPerm = await DeviceOrientationEvent.requestPermission();
       if (orientPerm !== 'granted') throw new Error('方向感測器權限被拒絕');
     }
-    // Android / 其他不需明確 requestPermission 的瀏覽器：直接嘗試註冊監聽
+
+    // 不能只信任 API 存在/回傳granted，必須實測是否真的收到感測器數據
+    // （部分瀏覽器/裝置設定下，事件會註冊成功但永遠不觸發，例如系統層級關閉了動作與方向存取）
+    const gotData = await verifySensorDataArrives();
+    if (!gotData) {
+      throw new Error('已註冊感測器監聽，但 3 秒內未收到任何數據。請確認「設定 → Safari → 動作與方向存取」已開啟，並重新整理頁面再試');
+    }
+
     window.addEventListener('devicemotion', handleMotion);
     window.addEventListener('deviceorientation', handleOrientation);
 
-    statusBox.textContent = '感測器權限已取得，可以開始偵測';
+    statusBox.textContent = '感測器權限已取得，已驗證可收到即時數據，可以開始偵測';
     statusBox.className = 'status-box status-ok';
-    document.getElementById('btn-start').disabled = false;
+    btnStart.disabled = false;
   } catch (err) {
-    statusBox.textContent = '權限取得失敗：' + err.message + '（請確認使用 HTTPS，且瀏覽器支援動作感測器）';
+    statusBox.textContent = '權限取得失敗：' + err.message;
     statusBox.className = 'status-box status-error';
+    btnStart.disabled = true;
   }
+}
+
+function verifySensorDataArrives() {
+  return new Promise((resolve) => {
+    let received = false;
+    const probe = (event) => {
+      if (event.accelerationIncludingGravity && event.accelerationIncludingGravity.x !== null) {
+        received = true;
+      }
+    };
+    window.addEventListener('devicemotion', probe);
+    setTimeout(() => {
+      window.removeEventListener('devicemotion', probe);
+      resolve(received);
+    }, 3000);
+  });
 }
 
 /* ======================================================================
