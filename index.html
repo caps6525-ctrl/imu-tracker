@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>IMU 室內行走軌跡偵測</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ============ 畫面一：設定頁 ============ -->
+  <section id="screen-setup" class="screen active">
+    <h1>IMU 行走軌跡偵測</h1>
+    <p class="subtitle">手機航位推算 (PDR) · 原始感測器記錄</p>
+
+    <label class="field">
+      <span>使用者名稱 / 編號 <em>*</em></span>
+      <input type="text" id="input-username" placeholder="例如：User01" autocomplete="off">
+    </label>
+
+    <label class="field">
+      <span>手機攜帶方式 <em>*</em></span>
+      <select id="input-carry-mode">
+        <option value="pocket_pants">褲子口袋</option>
+        <option value="pocket_jacket">外套 / 上衣口袋</option>
+        <option value="handheld">手持（看著手機走）</option>
+        <option value="armband">臂帶 / 背包</option>
+      </select>
+    </label>
+
+    <label class="field">
+      <span>身高 (cm，選填，用於初始步長估計)</span>
+      <input type="number" id="input-height" placeholder="例如：170" min="100" max="220">
+    </label>
+
+    <label class="field checkbox-field">
+      <input type="checkbox" id="input-loop-closure">
+      <span>這趟會走回起點（計算閉合誤差）</span>
+    </label>
+
+    <div id="permission-status" class="status-box status-pending">
+      尚未取得感測器權限
+    </div>
+
+    <button id="btn-request-permission" class="btn btn-primary">允許使用動作與方向感測器</button>
+    <button id="btn-start" class="btn btn-success" disabled>開始偵測</button>
+
+    <p class="hint">
+      iOS 需要手動授權動作感測器；請在 HTTPS 網址下開啟本頁（本機測試可用 localhost）。
+    </p>
+  </section>
+
+  <!-- ============ 畫面二：偵測中 ============ -->
+  <section id="screen-tracking" class="screen">
+    <div id="viz-container">
+      <canvas id="canvas-3d"></canvas>
+      <canvas id="canvas-2d" title="俯視圖 (北=上)"></canvas>
+    </div>
+
+    <div id="live-stats">
+      <div class="stat"><span class="stat-label">步數</span><span id="stat-steps" class="stat-value">0</span></div>
+      <div class="stat"><span class="stat-label">距離(m)</span><span id="stat-distance" class="stat-value">0.0</span></div>
+      <div class="stat"><span class="stat-label">高度(m)</span><span id="stat-height" class="stat-value">0.0</span></div>
+      <div class="stat"><span class="stat-label">狀態</span><span id="stat-segment" class="stat-value">平地</span></div>
+      <div class="stat"><span class="stat-label">信心度</span><span id="stat-confidence" class="stat-value">--</span></div>
+      <div class="stat"><span class="stat-label">取樣率(Hz)</span><span id="stat-samplerate" class="stat-value">--</span></div>
+    </div>
+
+    <button id="btn-stop" class="btn btn-danger">停止</button>
+  </section>
+
+  <!-- ============ 畫面三：結果頁 ============ -->
+  <section id="screen-result" class="screen">
+    <h2>路線結果</h2>
+    <div id="viz-container-result">
+      <canvas id="canvas-3d-result"></canvas>
+    </div>
+
+    <div id="summary-card">
+      <div class="summary-row"><span>總步數</span><span id="sum-steps"></span></div>
+      <div class="summary-row"><span>總時長</span><span id="sum-duration"></span></div>
+      <div class="summary-row"><span>推算總距離</span><span id="sum-distance"></span></div>
+      <div class="summary-row"><span>樓層變化段數</span><span id="sum-levelchanges"></span></div>
+      <div class="summary-row" id="sum-closure-row"><span>閉合誤差</span><span id="sum-closure"></span></div>
+      <div class="summary-row"><span>平均取樣率</span><span id="sum-samplerate"></span></div>
+    </div>
+
+    <div class="output-buttons">
+      <button id="btn-copy-track" class="btn btn-secondary">複製 Track JSON（座標序列）</button>
+      <button id="btn-download-full" class="btn btn-secondary">下載完整數據包 (JSON)</button>
+      <button id="btn-download-csv" class="btn btn-secondary">下載 CSV（track + raw）</button>
+      <button id="btn-restart" class="btn btn-primary">重新開始</button>
+    </div>
+
+    <details id="disclaimer-box">
+      <summary>重要限制說明（建議主管閱讀）</summary>
+      <ul>
+        <li>本數據為手機感測器航位推算結果，非衛星/UWB/視覺定位，水平位移誤差會隨路徑長度累積。</li>
+        <li>樓梯斜度為實測垂直/水平位移比值反推，非雷射測量值，僅供相對比較。</li>
+        <li>磁力計在電梯/金屬結構附近會失準，對應時段信心度會較低。</li>
+        <li>不同手機型號感測器品質差異大，跨裝置比較建議納入 device_info 與取樣率作為控制變因。</li>
+      </ul>
+    </details>
+  </section>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.161.0/three.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

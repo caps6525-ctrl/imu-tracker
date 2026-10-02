@@ -1,0 +1,218 @@
+:root {
+  --bg: #0f1420;
+  --surface: #1a2235;
+  --surface-2: #232d45;
+  --text: #e8ecf5;
+  --text-dim: #8b96ad;
+  --accent: #4f8cff;
+  --success: #3ecf8e;
+  --danger: #ff5c5c;
+  --warn: #ffb020;
+  --border: #2d3850;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC", "Noto Sans TC", sans-serif;
+  width: 100%;
+  overflow-x: hidden;
+}
+
+#app {
+  max-width: 480px;
+  margin: 0 auto;
+  min-height: 100vh;
+  padding: 20px 16px 40px;
+}
+
+.screen { display: none; }
+.screen.active { display: block; }
+
+h1 {
+  font-size: 22px;
+  margin: 8px 0 2px;
+}
+h2 {
+  font-size: 18px;
+  margin: 8px 0 16px;
+}
+.subtitle {
+  color: var(--text-dim);
+  font-size: 13px;
+  margin: 0 0 20px;
+}
+
+.field {
+  display: block;
+  margin-bottom: 14px;
+}
+.field span {
+  display: block;
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+.field em {
+  color: var(--danger);
+  font-style: normal;
+}
+.field input[type="text"],
+.field input[type="number"],
+.field select {
+  width: 100%;
+  padding: 11px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  font-size: 15px;
+}
+.checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.checkbox-field input {
+  width: 18px;
+  height: 18px;
+}
+.checkbox-field span { margin: 0; }
+
+.status-box {
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  margin: 16px 0;
+  border: 1px solid var(--border);
+}
+.status-pending { color: var(--warn); border-color: var(--warn); background: rgba(255,176,32,0.08); }
+.status-ok { color: var(--success); border-color: var(--success); background: rgba(62,207,142,0.08); }
+.status-error { color: var(--danger); border-color: var(--danger); background: rgba(255,92,92,0.08); }
+
+.btn {
+  display: block;
+  width: 100%;
+  padding: 14px;
+  border: none;
+  border-radius: 12px;
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 10px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn:active:not(:disabled) { opacity: 0.8; }
+.btn-primary { background: var(--accent); color: white; }
+.btn-success { background: var(--success); color: #06281b; }
+.btn-danger { background: var(--danger); color: white; }
+.btn-secondary { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
+
+.hint {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+#viz-container {
+  position: relative;
+  width: 100%;
+  height: 300px;
+  background: var(--surface);
+  border-radius: 12px;
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+#canvas-3d {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+#canvas-2d {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 110px;
+  height: 110px;
+  background: rgba(15,20,32,0.85);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+#viz-container-result {
+  width: 100%;
+  height: 320px;
+  background: var(--surface);
+  border-radius: 12px;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+#canvas-3d-result { width: 100%; height: 100%; display: block; }
+
+#live-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.stat {
+  background: var(--surface);
+  border-radius: 10px;
+  padding: 10px 8px;
+  text-align: center;
+}
+.stat-label {
+  display: block;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.stat-value {
+  display: block;
+  font-size: 17px;
+  font-weight: 700;
+  margin-top: 2px;
+}
+
+#summary-card {
+  background: var(--surface);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+.summary-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 7px 0;
+  font-size: 14px;
+  border-bottom: 1px solid var(--border);
+}
+.summary-row:last-child { border-bottom: none; }
+.summary-row span:first-child { color: var(--text-dim); }
+.summary-row span:last-child { font-weight: 600; }
+
+.output-buttons { margin-top: 8px; }
+
+#disclaimer-box {
+  margin-top: 20px;
+  background: var(--surface);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+#disclaimer-box summary {
+  cursor: pointer;
+  color: var(--text);
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+#disclaimer-box ul {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  line-height: 1.6;
+}
