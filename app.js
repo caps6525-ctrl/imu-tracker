@@ -372,7 +372,26 @@ function stepDetection(nowMs, accWorld, gyroZ, accMagnitude, dt) {
   // 滯後雙門檻峰值偵測（hysteresis thresholding）：
   // 訊號需先「上升超過 highThreshold」進入 armed 狀態，再「回落到 lowThreshold 以下」才確認完成一次波峰，
   // 避免單點比較在雜訊環境下對同一個真實步伐重複觸發或被雜訊打斷漏判。
-  const highThreshold = CARRY_MODE_THRESHOLD[state.carryMode] || 1.0;
+  //
+  // highThreshold 原本是依 carry_mode 給的固定值，實測發現同一趟行程裡
+  // 走路力度本身就會變化（例如去程走得較用力、回程較輕鬆/手比較穩），
+  // 固定門檻在力度變小的路段會整段偵測不到任何步伐——不是漏記，而是
+  // 波峰振幅從頭到尾都沒衝過門檻，armed 狀態根本不會被觸發。改成取
+  // 「carry_mode 門檻」與「最近窗口實際振幅的一定比例」兩者中較小值：
+  // 訊號變弱時門檻跟著自動下修，仍能抓到步伐；訊號正常或變大時則維持
+  // carry_mode 門檻不變，不因為偶發雜訊振幅飆高而誤調高門檻導致漏判。
+  const carryThreshold = CARRY_MODE_THRESHOLD[state.carryMode] || 1.0;
+  const recentVals = state.accVertBuffer.slice(-90).map(b => b.v); // 約1.5秒窗口(60Hz)
+  let adaptiveThreshold = carryThreshold;
+  if (recentVals.length >= 30) {
+    const recentMax = Math.max(...recentVals);
+    const recentMin = Math.min(...recentVals);
+    const recentRange = recentMax - recentMin;
+    // 門檻抓窗口振幅的 45%：高於真實步伐峰值不到一半的雜訊，低於真實步伐的波峰，
+    // 45% 是實測調出的經驗值——低於真實步伐的典型峰谷差，又足以濾掉平地滑動雜訊。
+    adaptiveThreshold = Math.max(recentRange * 0.45, 0.15); // 0.15 為雜訊下限，避免靜止時誤觸發
+  }
+  const highThreshold = Math.min(carryThreshold, adaptiveThreshold);
   const lowThreshold = highThreshold * 0.3;
 
   if (!stepFilterState.armed && filtered > highThreshold) {
