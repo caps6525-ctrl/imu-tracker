@@ -210,6 +210,8 @@ function handleOrientation(event) {
   state._lastHeadingHint = event.webkitCompassHeading !== undefined && event.webkitCompassHeading !== null
     ? event.webkitCompassHeading
     : (360 - event.alpha);
+  state._lastHeadingHintTime = performance.now();
+  state._headingHintStaleWarned = false;
 }
 
 function processSample(nowMs) {
@@ -257,6 +259,12 @@ function processSample(nowMs) {
     gyro: [round4(gx), round4(gy), round4(gz)],
     mag: mag ? [round3(mag[0]), round3(mag[1]), round3(mag[2])] : null,
     compass_heading_deg: state._lastHeadingHint !== undefined ? round3(state._lastHeadingHint) : null,
+    // true 代表這筆樣本當下 deviceorientation 已超過2秒沒更新，compass_heading_deg
+    // 是陳舊值，heading 修正在這段期間其實停用——留給事後分析用，避免像本次
+    // 診斷一樣得從重複出現的角度值反推才能發現這段資料的指南針修正已失效。
+    compass_stale: state._lastHeadingHintTime !== undefined
+      ? (nowMs - state._lastHeadingHintTime >= 2000)
+      : true,
     orientation_quat: [round4(q[0]), round4(q[1]), round4(q[2]), round4(q[3])],
   });
 
@@ -320,7 +328,25 @@ function stepDetection(nowMs, accWorld, gyroZ, accMagnitude, dt) {
   // 轉彎的瞬間把 heading 向錯誤方向拉、讓轉彎角度被低估。用當下 |gyroZ|
   // 當作信任判斷依據：轉彎越快，越不信任指南針（降低增益）；越接近直線走，
   // 越信任指南針（提高增益，加速收斂）。
-  if (state._lastHeadingHint !== undefined && state._lastHeadingHint !== null) {
+  // 實測發現 iOS 在某些情況下會長時間（觀測到連續16秒）完全不派發
+  // deviceorientation 事件，期間 _lastHeadingHint 停留在過期的舊值，
+  // 但裝置本身仍持續在動、轉動。若繼續拿這個停滯不前的舊角度去牽引
+  // heading，等於在這段時間徹底失去指南針錨定、只剩純陀螺儀積分，
+  // 殘餘漂移不受抑制地累積，卻完全沒有任何紀錄可供事後判斷。這裡用
+  // 「距離上次真正收到新指南針角度多久」判斷資料是否過期：超過
+  // staleThresholdMs 就跳過這次修正（而非繼續用舊值牽引，避免造成
+  // 「看似有修正、實際上在拉向一個早已不對的方向」的誤導），並記錄
+  // 一次性警示方便事後診斷這類系統層事件節流造成的誤差來源。
+  const headingHintStaleMs = state._lastHeadingHintTime !== undefined
+    ? nowMs - state._lastHeadingHintTime
+    : Infinity;
+  const staleThresholdMs = 2000;
+  const headingHintFresh = headingHintStaleMs < staleThresholdMs;
+  if (!headingHintFresh && state._lastHeadingHintTime !== undefined && !state._headingHintStaleWarned) {
+    state._headingHintStaleWarned = true;
+    console.warn('[compass] deviceorientation 事件已停止更新超過', staleThresholdMs, 'ms，暫停指南針修正，改純陀螺儀積分');
+  }
+  if (headingHintFresh) {
     const compassHeadingRad = state._lastHeadingHint * Math.PI / 180;
     let diff = compassHeadingRad - state.heading;
     // 把角度差正規化到 [-PI, PI]，避免在 0/360 度邊界附近修正方向算反
